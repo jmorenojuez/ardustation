@@ -1,2 +1,2 @@
 # ardustation
-Arudino Weather Station
+Arduino Weather Station
