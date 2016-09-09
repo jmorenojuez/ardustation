@@ -4,13 +4,11 @@
    @Author: José María Moreno Juez
    2016
    Components used:
-   - One green LED conected to PIN 12 -- Indicates succesfull operation
-   - One red LED conected to PIN 11 -- Indicates failure operation
    - Temp / Humidity DHT 11 sensor
    - Wifi module ESP8266
    - BMP180 Barometer / Temperature sensor
    - DS1302 Real Time Clock
-   - One LCD screen 16x2
+   - One LCD screen 16x2 --> http://www2.joinville.udesc.br/~i9/2014/07/17/hands-on-uma-pequena-aula-lcd-para-arduino/
 */
 
 #include <EEPROM.h>           // Library to deal with EEPROM memory
@@ -20,20 +18,44 @@
 #include <DHT.h>              // Library for dealing with DHT11 sensor
 #include <SoftwareSerial.h>   // Library for dealing with serial comunications
 #include <Adafruit_BMP085.h>  // Library for the BMP180 Barometer sensor
+#include <LiquidCrystal.h>    // Library for dealing with LCD screens
 
 #define DEBUG           1           // Debug flag for showing messgaes to serial connection
 #define BAUD_RATE       9600        // Serial port communication baud rate
 #define DHTTYPE         DHT11       // DHT 11 (Humidity sensor)
-#define DHT_PIN         2           // Pin used for DHT 11 sensor
-#define LED_RED         3           // Pin use for red LED
-#define LED_GREEN       4           // Pin use for green LED
+
+// Digital pins used
+#define LCD_RS_PIN      2           
+#define LCD_EN_PIN      3           
+#define LCD_D4_PIN      4           
+#define LCD_D5_PIN      5           
+#define LCD_D6_PIN      6           
+#define LCD_D7_PIN      7           
+#define DHT_PIN         8           // Pin used for DHT 11 sensor
+#define ESPTX           9           // what pin we're connected to (DIGITAL)
+#define ESPRX           10           // what pin we're connected to
+#define RTC_SCLK_PIN    11           // Pin used for RTC clock
+#define RTC_IO_PIN      12           // I/O Pin fro the RTC 
+#define RTC_CE_PIN      13           // CE pin for the RTC module 
+
+// Analog Pins used
+#define LCD_BUTTONS_PIN 0           // Analog input where LCD buttons are attached
 #define SDA_PIN         4           // IC2 data pin on Arduino Nano Analog Input
 #define SCL_PIN         5           // IC2 clock pin on Arduino Nano Analog Input
-#define ESPTX           5           // what pin we're connected to
-#define ESPRX           6           // what pin we're connected to
-#define RTC_SCLK_PIN    7           // Pin used for RTC clock
-#define RTC_IO_PIN      8           // I/O Pin fro the RTC 
-#define RTC_CE_PIN      9           // CE pin for the RTC module 
+
+                 
+// Constants for the LCD buttons
+#define btnRIGHT        0
+#define btnUP           1
+#define btnDOWN         2
+#define btnLEFT         3
+#define btnSELECT       4
+#define btnNONE         5
+
+#define LCD_COLUMNS     16
+#define LCD_ROWS        2
+#define LCD_CONTRAST    122
+
 
 #define SENSOR_READ_DELAY 5000 // When do we read sensor's data (in millisecs) ?
 // XXX: In order to prolong EEPROM's life write to it as less as you can!!
@@ -73,10 +95,36 @@ Timer t;                          // Instantiate the timer object
 virtuabotixRTC myRTC(RTC_SCLK_PIN, 
                      RTC_IO_PIN,
                      RTC_CE_PIN); // Creation of the Real Time Clock Object
+LiquidCrystal lcd(LCD_RS_PIN, 
+                  LCD_EN_PIN, 
+                  LCD_D4_PIN, 
+                  LCD_D5_PIN, 
+                  LCD_D6_PIN, 
+                  LCD_D7_PIN);    // select the pins used on the LCD panel
 DHT dht(DHT_PIN, DHTTYPE);        // Initialize DHT sensor for normal 16mhz Arduino
 SoftwareSerial BT1(ESPRX, ESPTX); // Initialize serial communication for the WIFI module
 
 /*************************** FUNCTION DECLARATION ********************************************/
+
+int read_LCD_buttons(){               // read the buttons
+    int adc_key_in = analogRead(LCD_BUTTONS_PIN);       // read the value from the sensor 
+
+    // my buttons when read are centered at these values: 0, 144, 329, 504, 741
+    // we add approx 50 to those values and check to see if we are close
+    // We make this the 1st option for speed reasons since it will be the most likely result
+
+    if (adc_key_in > 1000) return btnNONE; 
+
+    // For V1.1 us this threshold
+     if (adc_key_in < 50)   return btnRIGHT;  
+     if (adc_key_in < 195)  return btnUP; 
+     if (adc_key_in < 380)  return btnDOWN; 
+     if (adc_key_in < 555)  return btnLEFT; 
+     if (adc_key_in < 790)  return btnSELECT;  
+
+    return btnNONE;                // when all others fail, return this.
+}
+
 // Function that stores time part of the Date
 bool getTime(const char *str)
 {
@@ -154,19 +202,6 @@ float readAltitude() {
   // vary with weather and such. If it is 1015 millibars
   // that is equal to 101500 Pascals.
   return bmp.readAltitude(101500);
-}
-
-void turnOffLeds() {
-  digitalWrite(LED_RED, LOW);
-  digitalWrite(LED_GREEN, LOW);
-}
-
-void turnOnGreenLed() {
-  digitalWrite(LED_GREEN, HIGH);
-}
-
-void turnOnRedLed() {
-  digitalWrite(LED_RED, HIGH);
 }
 
 void resetVariables() {
@@ -279,34 +314,28 @@ unsigned long eeprom_crc(unsigned int from_address, unsigned int to_address) {
 
 void readSensors()
 {
-  turnOffLeds();
   humidity = dht.readHumidity();
   // Check if any reads failed and exit early (to try again).
   if (isnan(humidity)) {
     dshow("Failed to read humidity from DHT sensor!");
-    turnOnRedLed();
     return;
   }
   temperature = readTemperature();
   if (isnan(temperature)) {
     dshow("Failed to read temperature from LM35 sensor!");
-    turnOnRedLed();
     return;
   }
   pressure = readPressure();
   if (isnan(pressure)) {
     dshow("Failed to read pressure from barometric sensor!");
-    turnOnRedLed();
     return;
   }
   altitude = readAltitude();
    if (isnan(altitude)) {
     dshow("Failed to read altitude from barometric sensor!");
-    turnOnRedLed();
     return;
   }
   
-  turnOnGreenLed();
   dprint(humidity);
   dprint(temperature);
   dprint(pressure);
@@ -339,13 +368,9 @@ void setup() { // put your setup code here, to run once:
   Serial.begin(BAUD_RATE);
   while (!Serial) ; // wait for Arduino Serial Monitor
   dshow("Setting up weather station v 1.0!");
-  initEEPROM();
-  // initialize digital pins for LEDS as an output.
-  pinMode(LED_GREEN, OUTPUT);
-  pinMode(LED_RED, OUTPUT);
-  turnOffLeds();
-
-  setRTCFromCompiler(); // Initialize RTC clock form compiler time
+  initEEPROM(); // Initialize the EEPROM
+  setRTCFromCompiler(); // Initialize RTC clock from compiler time
+  lcd.begin(LCD_COLUMNS, LCD_ROWS); // Set up LCD display
   BT1.begin(BAUD_RATE); // Initilize WIFI module via serial communication
   if (!bmp.begin()) { // TODO: Could pass BMP085_ULTRALOWPOWER to save battery
     dshow("Could not find a valid BMP085 sensor, check wiring!");
@@ -359,6 +384,40 @@ void setup() { // put your setup code here, to run once:
 }
 
 void loop() {
+  // analogWrite (10, fadeValue);    // change the contrast
+  lcd.setCursor(9,1);             // move cursor to second line "1" and 9 spaces over
+  lcd.print(millis()/1000);       // display seconds elapsed since power-up
+
+  lcd.setCursor(0,1);             // move to the begining of the second line
+  int lcd_key = read_LCD_buttons();   // read the buttons
+  switch (lcd_key){               // depending on which button was pushed, we perform an action
+
+       case btnRIGHT:{             //  push button "RIGHT" and show the word on the screen
+            lcd.print(F("RIGHT "));
+            break;
+       }
+       case btnLEFT:{
+             lcd.print(F("LEFT   ")); //  push button "LEFT" and show the word on the screen
+             break;
+       }    
+       case btnUP:{
+             lcd.print(F("UP    "));  //  push button "UP" and show the word on the screen
+             break;
+       }
+       case btnDOWN:{
+             lcd.print(F("DOWN    "));  //  push button "UP" and show the word on the screen
+             break;
+       }
+       case btnSELECT:{
+             lcd.print(F("SELECT"));  //  push button "SELECT" and show the word on the screen
+             break;
+       }
+       case btnNONE:{
+             lcd.print(F("NONE  "));  //  No action  will show "None" on the screen
+             break;
+       }
+  }
+  
   t.update();
   // Dump communication over WIFI module to serial
   if (BT1.available()) {
