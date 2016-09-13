@@ -9,19 +9,22 @@
    - BMP180 Barometer / Temperature sensor
    - DS1302 Real Time Clock
    - One LCD screen 16x2 --> http://www2.joinville.udesc.br/~i9/2014/07/17/hands-on-uma-pequena-aula-lcd-para-arduino/
+
+   This program sends data to a WeeWx server ( http://www.weewx.com/ ) running on a Raspberry pi on the same network
 */
 
 #include <EEPROM.h>           // Library to deal with EEPROM memory
 #include <Timer.h>            // Library for creating timers
 #include <virtuabotixRTC.h>   // Library for DS1302 RTC component
 #include <TimeLib.h>          // Library with time utilities
+#include <Time.h>
 #include <DHT.h>              // Library for dealing with DHT11 sensor
-#include <SoftwareSerial.h>   // Library for dealing with serial comunications
+#include <SoftwareSerial.h>   // Library for dealing with ESP8266 WIFI module over serial communication
 #include <Adafruit_BMP085.h>  // Library for the BMP180 Barometer sensor
 #include <LiquidCrystal.h>    // Library for dealing with LCD screens
 
-#define DEBUG           1           // Debug flag for showing messgaes to serial connection
-#define BAUD_RATE       9600        // Serial port communication baud rate
+#define DEBUG           1           // Debug flag for showing messages to serial connection
+#define BAUD_RATE       115200      // Serial port communication baud rate
 #define DHTTYPE         DHT11       // DHT 11 (Humidity sensor)
 
 // Digital pins used
@@ -32,11 +35,11 @@
 #define LCD_D6_PIN      6           
 #define LCD_D7_PIN      7           
 #define DHT_PIN         8           // Pin used for DHT 11 sensor
-#define ESPTX           9           // what pin we're connected to (DIGITAL)
-#define ESPRX           10           // what pin we're connected to
-#define RTC_SCLK_PIN    11           // Pin used for RTC clock
-#define RTC_IO_PIN      12           // I/O Pin fro the RTC 
-#define RTC_CE_PIN      13           // CE pin for the RTC module 
+#define ESPTX           9           // Transmission PIN for ESP8266
+#define ESPRX           10          // Receive PIn for ESP8266
+#define RTC_SCLK_PIN    11          // Pin used for RTC clock
+#define RTC_IO_PIN      12          // I/O Pin for the RTC 
+#define RTC_CE_PIN      13          // CE pin for the RTC module 
 
 // Analog Pins used
 #define LCD_BUTTONS_PIN 0           // Analog input where LCD buttons are attached
@@ -56,10 +59,18 @@
 #define LCD_ROWS        2
 #define LCD_CONTRAST    122
 
-
-#define SENSOR_READ_DELAY 5000 // When do we read sensor's data (in millisecs) ?
+#ifdef DEBUG
+#define SENSOR_READ_DELAY 10000           // When do we read sensor's data (in millisecs)? Default one minute
+#else
+#define SENSOR_READ_DELAY 60000           // When do we read sensor's data (in millisecs)? Default one minute
+#endif
 // XXX: In order to prolong EEPROM's life write to it as less as you can!!
-#define WRITE_VARS_EEPROM_PERIOD 11000 // When do we write variables to EEPROM 
+#define WRITE_VARS_EEPROM_PERIOD 3600000  // When do we write variables to EEPROM (once an hour)
+
+String SSID_NAME       = "YouSSID";
+String WIFI_PASSWORD   = "YourPAssWord";
+String WEATHER_SERVER  =  "YourIP";
+
 
 // Debug routines
 #if DEBUG == 1
@@ -81,7 +92,7 @@ float humidity = 0.0f;        // Read from DHT11 sensor
 float temperature = 0.0f;     // Read from LM35 sensor
 long pressure = 0;            // Stores current air pressure
 float altitude = 0.0f;        // Stores current altitude
-const unsigned long CRC_STAMP =       2185581076L; // CRC of the 4 first bytes of the EEPROM
+const unsigned long CRC_STAMP = 2185581076L; // CRC of the 4 first bytes of the EEPROM
 tmElements_t tm;              // Time struct
 // Variable that stores the averages 
 float avg_humidity = 0.0f;
@@ -89,7 +100,6 @@ float avg_temperature = 0.0f;
 float avg_pressure = 0.0f;
 float avg_altitude = 0.0f;
 unsigned long measures_taken = 0;
-
 Adafruit_BMP085 bmp;              // Variable to deal with BMP180 Barometer sensor
 Timer t;                          // Instantiate the timer object
 virtuabotixRTC myRTC(RTC_SCLK_PIN, 
@@ -103,6 +113,7 @@ LiquidCrystal lcd(LCD_RS_PIN,
                   LCD_D7_PIN);    // select the pins used on the LCD panel
 DHT dht(DHT_PIN, DHTTYPE);        // Initialize DHT sensor for normal 16mhz Arduino
 SoftwareSerial BT1(ESPRX, ESPTX); // Initialize serial communication for the WIFI module
+
 
 /*************************** FUNCTION DECLARATION ********************************************/
 
@@ -160,6 +171,7 @@ void setRTCFromCompiler() {
     // Set the current date, and time in the following format:
     // seconds, minutes, hours, day of the week, day of the month, month, year
     myRTC.setDS1302Time(tm.Second, tm.Minute, tm.Hour, tm.Wday, tm.Day, tm.Month, tmYearToCalendar(tm.Year));
+    setTime(tm.Hour, tm.Minute ,tm.Second , tm.Day,  tm.Month, tm.Year);
     dshow("DS1302 configured Time=");
     dshow(__TIME__);
     dshow(", Date=");
@@ -172,7 +184,8 @@ void setRTCFromCompiler() {
   }
 }
 
-const char *getCurrentDateTime() {
+String getCurrentDateTime() {
+  myRTC.updateTime();
   String retval = "Current Date / Time:";
   retval += myRTC.dayofmonth;
   retval += "/";
@@ -185,7 +198,7 @@ const char *getCurrentDateTime() {
   retval += myRTC.minutes;
   retval += ":";
   retval += myRTC.seconds;
-  return retval.c_str();
+  return retval;
 }
 
 float readTemperature() {
@@ -286,7 +299,7 @@ void initEEPROM() {
     EEPROM.write(3, 38);
     dprint(eeprom_crc(0, 4));
   } else {
-    dshow("CRC is correct so read average values from meory int ovariables");
+    dshow("CRC is correct so read average values from memory into variables");
     readVarsFromEEPROM();
   }
   dshow("Done initializing the EEPROM memory");
@@ -314,6 +327,7 @@ unsigned long eeprom_crc(unsigned int from_address, unsigned int to_address) {
 
 void readSensors()
 {
+  dshow("************ Reading sensors**********");
   humidity = dht.readHumidity();
   // Check if any reads failed and exit early (to try again).
   if (isnan(humidity)) {
@@ -359,6 +373,85 @@ void readSensors()
       dshow("**********************");
   }
   measures_taken++; // Increase the number of measures taken
+  dshow("************ Succesfully read sensors **********");
+  sendDataWIFI(); // Finally send the data over WIFI to the server where WeeWx is running
+  
+}
+
+// Reset the esp8266 module
+void resetWIFI() {
+  BT1.begin(BAUD_RATE); // Initilize WIFI module via serial communication
+  BT1.println("AT+RST");
+  delay(1000);
+  if(BT1.find("OK") ) dshow("Module Reset");
+}
+
+// Connects to your wifi network
+void connectWIFI() {
+  String cmd = "AT+CWJAP=\"" + SSID_NAME + "\",\"" + WIFI_PASSWORD + "\"";
+  BT1.println(cmd);
+  delay(4000);
+  if(BT1.find("OK")) {
+    dshow("Connected!");
+  }
+  else {
+    dshow("Cannot connect to wifi!!"); 
+    while (1) {}
+  }
+}
+
+// Function that sends data to the WeeWx server over TCP port 9999
+void sendDataWIFI() {
+  BT1.println("AT+CIPSTART=\"TCP\",\"" + WEATHER_SERVER + "\",9999");//start a TCP connection.
+  if( BT1.find("OK")) {
+    dshow("TCP connection ready");
+  }
+  else {
+    char c = BT1.read() ;
+    Serial.print(c);
+    dshow("Can't send data to server. Exiting");
+    return;
+  }
+  
+  delay(1000);
+  /* Compose data to be sent to the WeeWx server
+   *  It should have the form of
+   *  key=value
+   *  key=value...
+  */
+  char temp[10];
+  // WeeWx FileParser expect measures using imperial system
+  String data = "Date = " + String(now()) + "\n"; 
+  dtostrf(celsius2fahrenheit(temperature),1,2,temp);
+  data += "outTemp = " +  String(temp) + "\n";
+  dtostrf(humidity,1,2,temp);
+  data += "outHumidity = " +   String(temp) + "\n";
+  float pressureTemp = pressure *0.0002953337;
+  dtostrf(pressureTemp,1,2,temp);
+  data += "pressure = " +   String(temp) + "\n";
+  dtostrf(altitude,1,2,temp);
+  data += "altimeter = " +   String(temp) + "\n";
+  BT1.print(F( "AT+CIPSEND=")); // Send command
+  BT1.println(data.length());
+  delay(500);
+  if(BT1.find(">")) { 
+    Serial.println("Sending.."); 
+    BT1.print(data);
+    if( BT1.find("SEND OK")) { 
+      dshow("Packet sent");
+   
+      while (BT1.available()) {
+        String tmpResp = BT1.readString();
+        dprint(tmpResp);
+      }
+    }
+  }
+  // close the connection
+  BT1.println("AT+CIPCLOSE"); 
+}
+
+float celsius2fahrenheit (float celsius){
+  return (1.8 * celsius) + 32;
 }
 
 /*************************** END OF FUNCTION DECLARATION ********************************************/
@@ -369,29 +462,28 @@ void setup() { // put your setup code here, to run once:
   while (!Serial) ; // wait for Arduino Serial Monitor
   dshow("Setting up weather station v 1.0!");
   initEEPROM(); // Initialize the EEPROM
+  resetWIFI();
+  // connectWIFI(); // FIXME: 
   setRTCFromCompiler(); // Initialize RTC clock from compiler time
-  lcd.begin(LCD_COLUMNS, LCD_ROWS); // Set up LCD display
-  BT1.begin(BAUD_RATE); // Initilize WIFI module via serial communication
+  lcd.begin(LCD_COLUMNS,LCD_ROWS); // Set up LCD display
   if (!bmp.begin()) { // TODO: Could pass BMP085_ULTRALOWPOWER to save battery
     dshow("Could not find a valid BMP085 sensor, check wiring!");
     while (1) {}
   }
   dht.begin(); // Initialize DHT 11 sensor
-  // Attacht events to the timer
+  // Attach events to the timer
   t.every(SENSOR_READ_DELAY, readSensors);
   t.every(WRITE_VARS_EEPROM_PERIOD, writeMeasureToEEPROM);
-
 }
 
 void loop() {
+  myRTC.updateTime();
   // analogWrite (10, fadeValue);    // change the contrast
   lcd.setCursor(9,1);             // move cursor to second line "1" and 9 spaces over
   lcd.print(millis()/1000);       // display seconds elapsed since power-up
-
   lcd.setCursor(0,1);             // move to the begining of the second line
   int lcd_key = read_LCD_buttons();   // read the buttons
   switch (lcd_key){               // depending on which button was pushed, we perform an action
-
        case btnRIGHT:{             //  push button "RIGHT" and show the word on the screen
             lcd.print(F("RIGHT "));
             break;
@@ -417,7 +509,6 @@ void loop() {
              break;
        }
   }
-  
   t.update();
   // Dump communication over WIFI module to serial
   if (BT1.available()) {
