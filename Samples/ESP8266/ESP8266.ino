@@ -1,5 +1,9 @@
 #include <SoftwareSerial.h>
-SoftwareSerial BT1(3, 2); // RX | TX
+
+#define ESPTX           9           // Transmission PIN for ESP8266
+#define ESPRX           10          // Receive PIn for ESP8266
+
+SoftwareSerial BT1(ESPRX, ESPTX); // RX | TX
 
 //#define BAUD_RATE 9600
 #define BAUD_RATE 115200
@@ -12,6 +16,7 @@ void setup(){
     while (!Serial) ; // wait for Arduino Serial Monitor
     BT1.begin(BAUD_RATE);
     pinMode(13, OUTPUT);
+    Serial.println("Finished setup");
 }
 
 void loop()
@@ -25,6 +30,4 @@ void loop()
          {  char c = Serial.read();
             BT1.print(c);
          }                    // Limpiamos las variables
-         
-         
 }

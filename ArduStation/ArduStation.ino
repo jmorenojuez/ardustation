@@ -22,6 +22,7 @@
 #include <SoftwareSerial.h>   // Library for dealing with ESP8266 WIFI module over serial communication
 #include <Adafruit_BMP085.h>  // Library for the BMP180 Barometer sensor
 #include <LiquidCrystal.h>    // Library for dealing with LCD screens
+#include "ESP8266.h"          // Library to deal with module ESP8266 --> https://github.com/itead/ITEADLIB_Arduino_WeeESP8266
 
 #define DEBUG           1           // Debug flag for showing messages to serial connection
 #define BAUD_RATE       115200      // Serial port communication baud rate
@@ -60,16 +61,17 @@
 #define LCD_CONTRAST    122
 
 #ifdef DEBUG
-#define SENSOR_READ_DELAY 10000           // When do we read sensor's data (in millisecs)? Default one minute
+#define SENSOR_READ_DELAY 10000           // When do we read sensor's data (in millisecs)? 10 seconds in debug mode
 #else
 #define SENSOR_READ_DELAY 60000           // When do we read sensor's data (in millisecs)? Default one minute
 #endif
 // XXX: In order to prolong EEPROM's life write to it as less as you can!!
 #define WRITE_VARS_EEPROM_PERIOD 3600000  // When do we write variables to EEPROM (once an hour)
 
-String SSID_NAME       = "YouSSID";
-String WIFI_PASSWORD   = "YourPAssWord";
-String WEATHER_SERVER  =  "YourIP";
+#define SSID_NAME       "MarensHouse"
+#define WIFI_PASSWORD   "A952E4C9"
+#define WEATHER_SERVER  "192.168.1.30"
+#define WEATHER_PORT    (9999)
 
 
 // Debug routines
@@ -113,7 +115,7 @@ LiquidCrystal lcd(LCD_RS_PIN,
                   LCD_D7_PIN);    // select the pins used on the LCD panel
 DHT dht(DHT_PIN, DHTTYPE);        // Initialize DHT sensor for normal 16mhz Arduino
 SoftwareSerial BT1(ESPRX, ESPTX); // Initialize serial communication for the WIFI module
-
+ESP8266 wifi(BT1,BAUD_RATE);
 
 /*************************** FUNCTION DECLARATION ********************************************/
 
@@ -379,41 +381,39 @@ void readSensors()
 }
 
 // Reset the esp8266 module
-void resetWIFI() {
-  BT1.begin(BAUD_RATE); // Initilize WIFI module via serial communication
-  BT1.println("AT+RST");
-  delay(1000);
-  if(BT1.find("OK") ) dshow("Module Reset");
-}
-
-// Connects to your wifi network
-void connectWIFI() {
-  String cmd = "AT+CWJAP=\"" + SSID_NAME + "\",\"" + WIFI_PASSWORD + "\"";
-  BT1.println(cmd);
-  delay(4000);
-  if(BT1.find("OK")) {
-    dshow("Connected!");
+void setupWIFI() { 
+  dshow("Setting up WIFI module over serial");
+  // Set operation mode for module
+  if (wifi.setOprToStationSoftAP()) {
+    dshow("to station + softap ok");
+  } else {
+    dshow("to station + softap err");
   }
-  else {
-    dshow("Cannot connect to wifi!!"); 
-    while (1) {}
+  // Connect to the access point
+  if (wifi.joinAP(SSID_NAME, WIFI_PASSWORD)) {
+    dshow("Join AP success");
+    dshow("Got IP:");
+    dprint(wifi.getLocalIP().c_str());       
+  } else {
+     dshow("Join AP failure");
   }
+  // Disable multiple connections
+  if (wifi.disableMUX()) {
+    dshow("single ok");
+  } else {
+    dshow("single err");
+  }
+  dshow("Wifi setup end");
 }
 
 // Function that sends data to the WeeWx server over TCP port 9999
 void sendDataWIFI() {
-  BT1.println("AT+CIPSTART=\"TCP\",\"" + WEATHER_SERVER + "\",9999");//start a TCP connection.
-  if( BT1.find("OK")) {
-    dshow("TCP connection ready");
+  dshow("Sending data over WIFI");
+  if (wifi.createTCP(WEATHER_SERVER, WEATHER_PORT)) {
+    dshow("Connected to the weather host");
+  } else {
+    dshow("Can't connect to the server");
   }
-  else {
-    char c = BT1.read() ;
-    Serial.print(c);
-    dshow("Can't send data to server. Exiting");
-    return;
-  }
-  
-  delay(1000);
   /* Compose data to be sent to the WeeWx server
    *  It should have the form of
    *  key=value
@@ -431,23 +431,18 @@ void sendDataWIFI() {
   data += "pressure = " +   String(temp) + "\n";
   dtostrf(altitude,1,2,temp);
   data += "altimeter = " +   String(temp) + "\n";
-  BT1.print(F( "AT+CIPSEND=")); // Send command
-  BT1.println(data.length());
-  delay(500);
-  if(BT1.find(">")) { 
-    Serial.println("Sending.."); 
-    BT1.print(data);
-    if( BT1.find("SEND OK")) { 
-      dshow("Packet sent");
-   
-      while (BT1.available()) {
-        String tmpResp = BT1.readString();
-        dprint(tmpResp);
-      }
-    }
+  if (wifi.send((const uint8_t*)data.c_str(), data.length())) {
+    dshow("Data successfully sent to the server");
+  } else {
+    dshow("Error sending data to the server");
   }
   // close the connection
-  BT1.println("AT+CIPCLOSE"); 
+  dshow("Attempting to disconnect from server");
+  if (wifi.releaseTCP()) {
+    dshow("release tcp ok");
+  } else {
+    dshow("release tcp err");
+  }
 }
 
 float celsius2fahrenheit (float celsius){
@@ -462,7 +457,7 @@ void setup() { // put your setup code here, to run once:
   while (!Serial) ; // wait for Arduino Serial Monitor
   dshow("Setting up weather station v 1.0!");
   initEEPROM(); // Initialize the EEPROM
-  resetWIFI();
+  setupWIFI();
   // connectWIFI(); // FIXME: 
   setRTCFromCompiler(); // Initialize RTC clock from compiler time
   lcd.begin(LCD_COLUMNS,LCD_ROWS); // Set up LCD display
@@ -510,13 +505,4 @@ void loop() {
        }
   }
   t.update();
-  // Dump communication over WIFI module to serial
-  if (BT1.available()) {
-    char c = BT1.read() ;
-    Serial.print(c);
-  }
-  if (Serial.available()) {
-    char c = Serial.read();
-    BT1.print(c);
-  }
 }
