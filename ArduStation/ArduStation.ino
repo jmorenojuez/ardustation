@@ -22,7 +22,7 @@
 #include <SoftwareSerial.h>   // Library for dealing with ESP8266 WIFI module over serial communication
 #include <Adafruit_BMP085.h>  // Library for the BMP180 Barometer sensor
 #include <LiquidCrystal.h>    // Library for dealing with LCD screens
-#include "ESP8266.h"          // Library to deal with module ESP8266 --> https://github.com/itead/ITEADLIB_Arduino_WeeESP8266
+#include <ESP8266.h>          // Library to deal with module ESP8266 --> https://github.com/itead/ITEADLIB_Arduino_WeeESP8266
 
 #define DEBUG           1           // Debug flag for showing messages to serial connection
 #define BAUD_RATE       115200      // Serial port communication baud rate
@@ -283,15 +283,15 @@ void writeMeasureToEEPROM() {
 }
 
 
-// Function that checks if the EEPROM memory has been initilialized by this program before.
-// If not it clears it and init the first two bytes with a particular stamp.
+// Function that checks if the EEPROM memory has been initialized by this program before.
+// If not it clears it and initialized the first two bytes with a particular stamp.
 void initEEPROM() {
-  dshow("Initilizing the EEPROM memory");
+  dshow("Initializing the EEPROM memory");
   int address = 0;
   unsigned long crc = eeprom_crc(0, 4);
   dprint(crc);
   dprint(CRC_STAMP);
-  // Check if the EEPROM has been initialzed by our program
+  // Check if the EEPROM has been initialized by our program
   if (crc != CRC_STAMP) {
     dshow("CRC of the four first bytes is not correct");
     clearEEPROM();
@@ -307,7 +307,7 @@ void initEEPROM() {
   dshow("Done initializing the EEPROM memory");
 }
 
-// Funciton that calculates the CRC of the bytes stored in the EEPROM
+// Function that calculates the CRC of the bytes stored in the EEPROM
 unsigned long eeprom_crc(unsigned int from_address, unsigned int to_address) {
 
   const unsigned long crc_table[16] = {
@@ -381,7 +381,7 @@ void readSensors()
 }
 
 // Reset the esp8266 module
-void setupWIFI() { 
+bool setupWIFI() { 
   dshow("Setting up WIFI module over serial");
   // Set operation mode for module
   if (wifi.setOprToStationSoftAP()) {
@@ -392,10 +392,10 @@ void setupWIFI() {
   // Connect to the access point
   if (wifi.joinAP(SSID_NAME, WIFI_PASSWORD)) {
     dshow("Join AP success");
-    dshow("Got IP:");
-    dprint(wifi.getLocalIP().c_str());       
+    dprint(wifi.getLocalIP());       
   } else {
      dshow("Join AP failure");
+     return false;
   }
   // Disable multiple connections
   if (wifi.disableMUX()) {
@@ -404,15 +404,20 @@ void setupWIFI() {
     dshow("single err");
   }
   dshow("Wifi setup end");
+  return true;
 }
 
 // Function that sends data to the WeeWx server over TCP port 9999
-void sendDataWIFI() {
+bool sendDataWIFI() {
+  bool isConnected = false;
+  bool retVal = false;
   dshow("Sending data over WIFI");
   if (wifi.createTCP(WEATHER_SERVER, WEATHER_PORT)) {
     dshow("Connected to the weather host");
+    isConnected = true;
   } else {
     dshow("Can't connect to the server");
+    return false;
   }
   /* Compose data to be sent to the WeeWx server
    *  It should have the form of
@@ -438,11 +443,15 @@ void sendDataWIFI() {
   }
   // close the connection
   dshow("Attempting to disconnect from server");
-  if (wifi.releaseTCP()) {
-    dshow("release tcp ok");
-  } else {
-    dshow("release tcp err");
+  if (isConnected) {
+    if (wifi.releaseTCP()) {
+      dshow("release tcp ok");
+      retVal = true;
+    } else {
+      dshow("release tcp err");
+    }
   }
+  return retVal;
 }
 
 float celsius2fahrenheit (float celsius){
