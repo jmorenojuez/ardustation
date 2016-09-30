@@ -23,6 +23,7 @@
 #include <Adafruit_BMP085.h>  // Library for the BMP180 Barometer sensor
 #include <LiquidCrystal.h>    // Library for dealing with LCD screens
 #include <ESP8266.h>          // Library to deal with module ESP8266 --> https://github.com/itead/ITEADLIB_Arduino_WeeESP8266
+#include <MemoryFree.h>
 
 #define DEBUG           1           // Debug flag for showing messages to serial connection
 #define BAUD_RATE       115200      // Serial port communication baud rate
@@ -60,6 +61,11 @@
 #define LCD_ROWS        2
 #define LCD_CONTRAST    122
 
+#define SEND_WEEWX			0
+#define SEND_OPEN_WEATHER	1
+#define LATITUDE		(40.44770)
+#define LONGITUDE		(-3.69603)
+#define STATION_NAME	"MarensStation"
 #ifdef DEBUG
 #define SENSOR_READ_DELAY 10000           // When do we read sensor's data (in millisecs)? 10 seconds in debug mode
 #else
@@ -68,11 +74,15 @@
 // XXX: In order to prolong EEPROM's life write to it as less as you can!!
 #define WRITE_VARS_EEPROM_PERIOD 3600000  // When do we write variables to EEPROM (once an hour)
 
-#define SSID_NAME       "MarensHouse"
-#define WIFI_PASSWORD   "A952E4C9"
-#define WEATHER_SERVER  "192.168.1.30"
-#define WEATHER_PORT    (9999)
 
+/* */ 
+#define SSID_NAME         "YourSSID"
+#define WIFI_PASSWORD     "YourPassword"
+#define OPENWEATHER_SERVER  "openweathermap.org"
+#define CredBase64       "username:password"   //Enter here the BASE64 encoded Credentials in the form <Username>:<Password>
+#define WEEWX_SERVER      "weewxserver"
+#define WEEWX_PORT        (port)
+/* */
 
 // Debug routines
 #if DEBUG == 1
@@ -327,6 +337,7 @@ unsigned long eeprom_crc(unsigned int from_address, unsigned int to_address) {
   return crc;
 }
 
+/* Procedure that read data from all the sensors attached to Arduino */
 void readSensors()
 {
   dshow("************ Reading sensors**********");
@@ -407,51 +418,128 @@ bool setupWIFI() {
   return true;
 }
 
-// Function that sends data to the WeeWx server over TCP port 9999
+bool sendDataWeeWx() {
+
+	  bool isConnected = false;
+	  bool retVal = false;
+	  dshow("Sending data over WIFI for WeeWx server");
+
+	  if (wifi.createTCP(WEEWX_SERVER, WEEWX_PORT)) {
+	    dshow("Connected to the weather host");
+	    isConnected = true;
+	  } else {
+	    dshow("Can't connect to the server");
+	    return false;
+	  }
+	  /* Compose data to be sent to the WeeWx server
+	   *  It should have the form of
+	   *  key=value
+	   *  key=value...
+	  */
+	  char temp[10];
+	  // WeeWx FileParser expect measures using imperial system
+	  String data = "Date = " + String(now()) + "\n";
+	  dtostrf(celsius2fahrenheit(temperature),1,2,temp);
+	  data += "outTemp = " +  String(temp) + "\n";
+	  dtostrf(humidity,1,2,temp);
+	  data += "outHumidity = " +   String(temp) + "\n";
+	  float pressureTemp = pressure *0.0002953337;
+	  dtostrf(pressureTemp,1,2,temp);
+	  data += "pressure = " +   String(temp) + "\n";
+	  dtostrf(altitude,1,2,temp);
+	  data += "altimeter = " +   String(temp) + "\n";
+	  if (wifi.send((const uint8_t*)data.c_str(), data.length())) {
+	    dshow("Data successfully sent to the server");
+	  } else {
+	    dshow("Error sending data to the server");
+	  }
+	  // close the connection
+	  dshow("Attempting to disconnect from server");
+	  if (isConnected) {
+	    if (wifi.releaseTCP()) {
+	      dshow("release tcp ok");
+	      retVal = true;
+	    } else {
+	      dshow("release tcp err");
+	    }
+	  }
+	  return retVal;
+}
+
+/* Method that sends data to OpenWeather service */
+bool sendDataOpenWeather() {
+  Serial.println(freeMemory());
+  dshow("Sending data to OpenWeather server");
+	String packet = "";
+	packet += "temp=";
+	packet += temperature;
+	packet += "&humidity=";
+	packet += humidity;
+	packet += "&pressure=";
+	packet += pressure;
+	packet += "&lat=";
+	packet += LATITUDE;
+	packet += "&long=";
+	packet += LONGITUDE;
+	packet += "&alt=";
+	packet += altitude;
+	packet += "&name=";
+	packet += STATION_NAME;
+  dshow("Sending data to OpenWeather server");
+  dprint(packet);
+	
+	bool isConnected = false;
+	bool retVal = false;
+
+	if (wifi.createTCP(OPENWEATHER_SERVER, 80)) {
+		dshow("Connected to the weather host");
+		isConnected = true;
+	} else {
+		dshow("Can't connect to the server");
+		return false;
+	}
+	// Build up POST request
+	String cmd = "POST /data/post HTTP/1.1\n";
+	cmd += "Host: ";
+	cmd += OPENWEATHER_SERVER;
+	cmd += "\n";
+	cmd += "Content-Type: application/x-www-form-urlencoded\n";
+	cmd += "Authorization: Basic ";
+	cmd += CredBase64;
+	cmd += "\n";
+	cmd += "Content-Length: ";
+	cmd += packet.length();
+	cmd += "\n";
+	cmd += "Connection: close\n\n";
+	cmd += packet;
+	cmd += "\r\n\r\n";
+  dprint(cmd);
+	if (wifi.send((const uint8_t*)cmd.c_str(), cmd.length())) {
+		dshow("Data successfully sent to the server");
+	} else {
+		dshow("Error sending data to the server");
+	}
+	// close the connection
+	dshow("Attempting to disconnect from server");
+	if (isConnected) {
+		if (wifi.releaseTCP()) {
+		  dshow("release tcp ok");
+		  retVal = true;
+		} else {
+		  dshow("release tcp err");
+		}
+	}
+	return retVal;
+}
+
+// Function that sends data to the weather server, either WeeWx or Open weather
 bool sendDataWIFI() {
-  bool isConnected = false;
-  bool retVal = false;
-  dshow("Sending data over WIFI");
-  if (wifi.createTCP(WEATHER_SERVER, WEATHER_PORT)) {
-    dshow("Connected to the weather host");
-    isConnected = true;
-  } else {
-    dshow("Can't connect to the server");
-    return false;
+  if (SEND_WEEWX) return sendDataWeeWx();
+  else if (SEND_OPEN_WEATHER) return sendDataOpenWeather();
+  else {
+	  dshow ("No server defined for storing data");
+	  return false;
   }
-  /* Compose data to be sent to the WeeWx server
-   *  It should have the form of
-   *  key=value
-   *  key=value...
-  */
-  char temp[10];
-  // WeeWx FileParser expect measures using imperial system
-  String data = "Date = " + String(now()) + "\n"; 
-  dtostrf(celsius2fahrenheit(temperature),1,2,temp);
-  data += "outTemp = " +  String(temp) + "\n";
-  dtostrf(humidity,1,2,temp);
-  data += "outHumidity = " +   String(temp) + "\n";
-  float pressureTemp = pressure *0.0002953337;
-  dtostrf(pressureTemp,1,2,temp);
-  data += "pressure = " +   String(temp) + "\n";
-  dtostrf(altitude,1,2,temp);
-  data += "altimeter = " +   String(temp) + "\n";
-  if (wifi.send((const uint8_t*)data.c_str(), data.length())) {
-    dshow("Data successfully sent to the server");
-  } else {
-    dshow("Error sending data to the server");
-  }
-  // close the connection
-  dshow("Attempting to disconnect from server");
-  if (isConnected) {
-    if (wifi.releaseTCP()) {
-      dshow("release tcp ok");
-      retVal = true;
-    } else {
-      dshow("release tcp err");
-    }
-  }
-  return retVal;
 }
 
 float celsius2fahrenheit (float celsius){
@@ -485,7 +573,7 @@ void loop() {
   // analogWrite (10, fadeValue);    // change the contrast
   lcd.setCursor(9,1);             // move cursor to second line "1" and 9 spaces over
   lcd.print(millis()/1000);       // display seconds elapsed since power-up
-  lcd.setCursor(0,1);             // move to the begining of the second line
+  lcd.setCursor(0,1);             // move to the beginning of the second line
   int lcd_key = read_LCD_buttons();   // read the buttons
   switch (lcd_key){               // depending on which button was pushed, we perform an action
        case btnRIGHT:{             //  push button "RIGHT" and show the word on the screen
