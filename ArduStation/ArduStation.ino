@@ -71,7 +71,19 @@
 // XXX: In order to prolong EEPROM's life write to it as less as you can!!
 #define WRITE_VARS_EEPROM_PERIOD 3600000  // When do we write variables to EEPROM (once an hour)
 
-/* */ 
+/* Delete these lines before push to GitHub */
+#define SSID_NAME       	"MarensHouse"
+#define WIFI_PASSWORD   	"A952E4C9"
+#define OPENWEATHER_SERVER  "138.201.197.100"
+//#define OPENWEATHER_SERVER  "openweathermap.org"
+#define CredBase64       "jmorenojuez:dreamcast"   //Enter here the BASE64 encoded Credentials in the form <Username>:<Password>
+#define WEEWX_SERVER      "192.168.1.30"
+#define WEEWX_PORT        (9999)
+#define LATITUDE    (40.44770)
+#define LONGITUDE   (-3.69603)
+#define STATION_NAME  "MarensStation"
+
+/*  
 #define SSID_NAME         "YourSSID"
 #define WIFI_PASSWORD     "YourPassword"
 #define OPENWEATHER_SERVER  "openweathermap.org"
