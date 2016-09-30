@@ -63,9 +63,6 @@
 
 #define SEND_WEEWX			0
 #define SEND_OPEN_WEATHER	1
-#define LATITUDE		(40.44770)
-#define LONGITUDE		(-3.69603)
-#define STATION_NAME	"MarensStation"
 #ifdef DEBUG
 #define SENSOR_READ_DELAY 10000           // When do we read sensor's data (in millisecs)? 10 seconds in debug mode
 #else
@@ -74,7 +71,6 @@
 // XXX: In order to prolong EEPROM's life write to it as less as you can!!
 #define WRITE_VARS_EEPROM_PERIOD 3600000  // When do we write variables to EEPROM (once an hour)
 
-
 /* */ 
 #define SSID_NAME         "YourSSID"
 #define WIFI_PASSWORD     "YourPassword"
@@ -82,6 +78,9 @@
 #define CredBase64       "username:password"   //Enter here the BASE64 encoded Credentials in the form <Username>:<Password>
 #define WEEWX_SERVER      "weewxserver"
 #define WEEWX_PORT        (port)
+#define LATITUDE    (yourLatitude)
+#define LONGITUDE   (yourLongitude)
+#define STATION_NAME  "YourStationName"
 /* */
 
 // Debug routines
